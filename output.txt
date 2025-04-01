@@ -1,5 +1,0 @@
-Simple object for storing attributes.
-
-    Implements equality by attribute names and values, and provides a simple
-    string representation.
-    

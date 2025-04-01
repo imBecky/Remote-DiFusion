@@ -4,3 +4,6 @@ demo.sh
 log.md
 **/.pth
 ./dataset
+dataset/
+logs/
+__pycache__/
