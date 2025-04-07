@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pytorch_lightning as L
+import torchmetrics
 from functools import partial
 from einops import rearrange, reduce
 from torch import einsum
 from utils import default, SinusoidalPositionEmbeddings, Residual, Downsample, Upsample
-
 
 """
 =========================================UNets================================================
@@ -114,7 +115,7 @@ class ResnetBlock(nn.Module):
 class Attention(nn.Module):
     def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
-        self.scale = dim_head**-0.5
+        self.scale = dim_head ** -0.5
         self.heads = heads
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, (1, 1), bias=False)
@@ -140,7 +141,7 @@ class Attention(nn.Module):
 class LinearAttention(nn.Module):
     def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
-        self.scale = dim_head**-0.5
+        self.scale = dim_head ** -0.5
         self.heads = heads
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, (1, 1), bias=False)
@@ -179,14 +180,14 @@ class PreNorm(nn.Module):
 
 class Unet(nn.Module):
     def __init__(
-        self,
-        dim,
-        init_dim=None,
-        out_dim=None,
-        dim_mults=(1, 2, 4, 8),
-        channels=3,
-        self_condition=True,
-        resnet_block_groups=4,
+            self,
+            dim,
+            init_dim=None,
+            out_dim=None,
+            dim_mults=(1, 2, 4, 8),
+            channels=3,
+            self_condition=True,
+            resnet_block_groups=4,
     ):
         super().__init__()
 
@@ -302,6 +303,119 @@ class Unet(nn.Module):
         return self.final_conv(x)
 
 
+"""
+=========================================UNets================================================
+UNet implementation of pytorch lightning
+"""
+
+
+# 定义基础模块
+class DoubleConv(L.LightningModule):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, (3, 3), padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, (3, 3), padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class DownBlock(L.LightningModule):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.down = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_channels, out_channels)
+        )
+
+    def forward(self, x):
+        return self.down(x)
+
+
+class UpBlock(L.LightningModule):
+    def __init__(self, in_channels, out_channels, bilinear=True):
+        super().__init__()
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True) if bilinear else nn.ConvTranspose2d(
+            in_channels // 2, in_channels // 2, (2, 2), stride=(2, 2))
+        self.conv = DoubleConv(in_channels, out_channels)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        # 跳跃连接对齐尺寸
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
+
+
+# 主模型类
+class UNet(L.LightningModule):
+    def __init__(self, n_channels=3, n_classes=1, bilinear=True):
+        super().__init__()
+        self.inc = DoubleConv(n_channels, 64)
+        self.down1 = DownBlock(64, 128)
+        self.down2 = DownBlock(128, 256)
+        self.down3 = DownBlock(256, 512)
+        self.down4 = DownBlock(512, 512)
+        self.up1 = UpBlock(1024, 256, bilinear)
+        self.up2 = UpBlock(512, 128, bilinear)
+        self.up3 = UpBlock(256, 64, bilinear)
+        self.up4 = UpBlock(128, 64, bilinear)
+        self.outc = nn.Conv2d(64, n_classes, (1, 1))
+
+    def forward(self, x):
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        return self.outc(x)
+
+
+class LitUNet(UNet):
+    def __init__(self, n_channels=3, n_classes=1):
+        super().__init__(n_channels, n_classes)
+        self.loss_fn = nn.BCEWithLogitsLoss()  # 二分类任务常用损失
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = self.loss_fn(y_hat, y)
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = self.loss_fn(y_hat, y)
+        # 计算IoU指标（需安装torchmetrics）
+        iou = torchmetrics.JaccardIndex(task='binary')(y_hat, y)
+        self.log("val_loss", loss)
+        self.log("val_iou", iou, prog_bar=True)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss"
+            }
+        }
+
+
 class Classifier(nn.Module):
     """A simple convolutional neural network with residual connections."""
 
@@ -349,3 +463,89 @@ class Classifier(nn.Module):
 
         x = self.final(x)  # [batch_size, 1, 32, 32]
         return x
+
+
+class LightningClassifier(L.LightningModule):
+    def __init__(self, dr, lr=1e-3):  # 新增学习率参数
+        super().__init__()
+        self.save_hyperparameters()  # 自动保存超参数[5,8](@ref)
+
+        # 保留原始模型结构
+        self.upsample_factor = 2
+        self.dr = dr
+        self.model = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=(3, 3), padding=1),
+            nn.Dropout(dr),
+            nn.ReLU(),
+            self._make_residual_block(16, 16),
+            self._make_residual_block(16, 16),
+            nn.Conv2d(16, 32, kernel_size=(3, 3), padding=1),
+            nn.Dropout(dr),
+            nn.ReLU(),
+            self._make_residual_block(32, 32),
+            self._make_residual_block(32, 32),
+            nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1),
+            nn.Dropout(dr),
+            nn.ReLU(),
+            self._make_residual_block(64, 64),
+            self._make_residual_block(64, 64)
+        )
+        self.upsample = nn.Upsample(scale_factor=self.upsample_factor, mode='bilinear', align_corners=True)
+        self.final = nn.Conv2d(64, 1, kernel_size=(3, 3), padding=1)
+
+    def _make_residual_block(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=(3, 3), padding=1),
+            nn.Dropout(self.dr),
+            nn.ReLU(),
+            nn.Conv2d(out_channels, out_channels, kernel_size=(3, 3), padding=1),
+            nn.Dropout(self.dr)
+        )
+
+    def forward(self, x):
+        identity = x
+        x = self.model(x)
+        x = x + identity
+        x = self.upsample(x)
+        x = self.upsample(x)
+        x = x[:, :, 48:80, 48:80]
+        return self.final(x)
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = F.binary_cross_entropy_with_logits(y_hat, y)  # 假设是二分类任务[1,5](@ref)
+        self.log("train_loss", loss, prog_bar=True)  # 自动进度条显示[8](@ref)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = F.binary_cross_entropy_with_logits(y_hat, y)
+        self.log("val_loss", loss, prog_bar=True)
+
+        # 可添加指标如IoU（分割任务）或准确率
+        preds = torch.sigmoid(y_hat) > 0.5
+        acc = (preds == y).float().mean()
+        self.log("val_acc", acc, prog_bar=True)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)  # 使用传入的学习率[5](@ref)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss",  # 根据验证损失调整学习率[3](@ref)
+                "interval": "epoch"
+            }
+        }
+
+    def on_train_start(self):
+        # 初始化自定义回调（可选）
+        self.example_input_array = torch.rand(1, 1, 64, 64)  # 启用模型摘要功能[6](@ref)
+
+    def predict_step(self, batch, batch_idx):
+        # 实现推理接口
+        x, _ = batch
+        return torch.sigmoid(self(x))  # 输出概率值[7](@ref)
