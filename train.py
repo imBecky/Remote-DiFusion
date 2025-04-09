@@ -1,11 +1,13 @@
 import argparse
+import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import lightning as L
+from torch.utils.data import DataLoader
+# import pytorch_lightning as pl
 from torch import optim
-from dataset import data_report
-from Model import Unet, Classifier
+from datasetflow import data_report, SZUTree_Dataset_R1_raw
+from Model import ResNet50Encoder
 from utils import set_seed, Dataset_from_feature, SplitDataset, CosineSimilarityLoss
 
 CUDA0 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,25 +33,6 @@ def get_argument_parse():
     parse.add_argument('--log_dir', default='./logs')
     args = parse.parse_args()
     return args
-
-
-class Models(nn.Module):
-    def __init__(self, args):
-        super(Models, self).__init__()
-        self.args = args
-        self.Denoiser_vhr = None
-        self.Denoiser_lidar = None
-        self.Denoiser_hsi = None
-        self.classifier = None
-        self.discriminator = None
-
-    def init_denoisers(self):
-        self.Denoiser_vhr = Unet(dim=self.args.image_size, channels=self.args.feature_channels, dim_mults=self.args.dim_mults)
-        self.Denoiser_lidar = Unet(dim=self.args.image_size, channels=self.args.feature_channels, dim_mults=self.args.dim_mults)
-        self.Denoiser_hsi = Unet(dim=self.args.image_size, channels=self.args.feature_channels, dim_mults=self.args.dim_mults)
-
-    def init_classifier(self):
-        self.classifier = Classifier(self.args.dr)
 
 
 class Trainer(nn.Module):
@@ -95,15 +78,21 @@ def main(args):
         data_report(args.dataset)
     elif args.trial_run == 1:
         # TODO: Encode the data
+        dataset = None
+        if args.dataset == 'SZU_R1':
+            dataset = SZUTree_Dataset_R1_raw
+        dataloader_raw = DataLoader(dataset, batch_size=args.bs, shuffle=True)
+        loop = tqdm.tqdm(enumerate(dataloader_raw), total=len(dataloader_raw))
         pass
     elif args.trial_run == 2:
         # TODO: Encode + Diffusion + Classification
-        models = Models(args)
-        trainer = Trainer(models, args)
-        trainer.init_denoiser()
-        trainer.init_classifier()
-        trainer.init_data_loader()
-        trainer.to(CUDA0)
+        pass
+        # models = Models(args)
+        # trainer = Trainer(models, args)
+        # trainer.init_denoiser()
+        # trainer.init_classifier()
+        # trainer.init_data_loader()
+        # trainer.to(CUDA0)
     else:
         print("\033[91m Trial Run设置错误！！！\033[0m")
 

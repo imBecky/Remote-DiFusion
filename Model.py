@@ -1,12 +1,40 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as L
+import pytorch_lightning as pl
 import torchmetrics
+import torchvision
 from functools import partial
 from einops import rearrange, reduce
 from torch import einsum
 from utils import default, SinusoidalPositionEmbeddings, Residual, Downsample, Upsample
+
+
+class ResNet50Encoder(pl.LightningModule):
+    """
+    ============= lightning ResNet50 encoder =============
+    """
+    def __init__(self, pretrained=True, freeze_encoder=False):
+        super().__init__()
+        original_model = torchvision.models.resnet50(weights="DEFAULT" if pretrained else None)
+        self.encoder = nn.Sequential(
+            original_model.conv1,
+            original_model.bn1,
+            original_model.relu,
+            original_model.maxpool,
+            original_model.layer1,
+            original_model.layer2,
+            original_model.layer3,
+            original_model.layer4
+        )
+        if freeze_encoder:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+    def forward(self, input):
+        features = self.encoder(input)
+        return features
+
 
 """
 =========================================UNets================================================
@@ -310,7 +338,7 @@ UNet implementation of pytorch lightning
 
 
 # 定义基础模块
-class DoubleConv(L.LightningModule):
+class DoubleConv(pl.LightningModule):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv = nn.Sequential(
@@ -326,7 +354,7 @@ class DoubleConv(L.LightningModule):
         return self.conv(x)
 
 
-class DownBlock(L.LightningModule):
+class DownBlock(pl.LightningModule):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.down = nn.Sequential(
@@ -338,7 +366,7 @@ class DownBlock(L.LightningModule):
         return self.down(x)
 
 
-class UpBlock(L.LightningModule):
+class UpBlock(pl.LightningModule):
     def __init__(self, in_channels, out_channels, bilinear=True):
         super().__init__()
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True) if bilinear else nn.ConvTranspose2d(
@@ -356,7 +384,7 @@ class UpBlock(L.LightningModule):
 
 
 # 主模型类
-class UNet(L.LightningModule):
+class UNet(pl.LightningModule):
     def __init__(self, n_channels=3, n_classes=1, bilinear=True):
         super().__init__()
         self.inc = DoubleConv(n_channels, 64)
@@ -465,7 +493,7 @@ class Classifier(nn.Module):
         return x
 
 
-class LightningClassifier(L.LightningModule):
+class LightningClassifier(pl.LightningModule):
     def __init__(self, dr, lr=1e-3):  # 新增学习率参数
         super().__init__()
         self.save_hyperparameters()  # 自动保存超参数[5,8](@ref)
@@ -549,3 +577,27 @@ class LightningClassifier(L.LightningModule):
         # 实现推理接口
         x, _ = batch
         return torch.sigmoid(self(x))  # 输出概率值[7](@ref)
+
+
+class DiFusionModel(pl.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.encoder = ResNet50Encoder(True, False)
+        self.args = args
+
+    def forward(self, X):
+        X = self.encoder(X)
+        return X
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss_diffusion = 0.0     # TODO: add loss afterwards
+        loss_discriminate = 0.0
+        loss_classification = 0.0
+        self.log("diffusion loss", loss_diffusion)
+        self.log("discriminate loss", loss_discriminate)
+        self.log("classification loss", loss_classification)
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=self.lr)

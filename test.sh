@@ -1,9 +1,9 @@
 #!/bin/bash
 
-echo "Run${trial_run} Training Script"
 
-trial_run=2
-dataset="./dataset/Houston/small/"
+trial_run=0
+echo "Runing${trial_run} Training Script, trial_run${trial_run}"
+dataset="SZU_R1"  # SZU_R1, SZU_R2 or Houston
 epoch=30
 seed=13
 T=1000
