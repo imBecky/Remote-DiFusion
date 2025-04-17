@@ -63,6 +63,7 @@ for i, file_path in enumerate([file_path_HSI, file_path_CHM]):
             transposed_data = torch.from_numpy(np.transpose(data, (2, 0, 1)))
         else:
             transposed_data = torch.from_numpy(data).unsqueeze(0)
+        print(transposed_data.shape)
         szu_data_dict['hsi' if i == 0 else 'lidar'] = transposed_data
 
 rgb = sio.loadmat(file_path_RGB)['data']
@@ -70,5 +71,5 @@ szu_data_dict['rgb'] = torch.from_numpy(rgb)
 labels = sio.loadmat('./dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/Annotations_SZUTreeData_R1'
                      '/SZUTreeData_R1_typeid_with_labels_5cm.mat')
 labels = torch.from_numpy(labels['data'])
-SZUTree_Dataset_R1_raw = CustomDataset(data_dict=szu_data_dict, labels=labels)
+SZUTree_Dataset_R1 = CustomDataset(data_dict=szu_data_dict, labels=labels)
 
