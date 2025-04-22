@@ -10,6 +10,7 @@ from torch import optim
 from datasetflow import data_report, SZUTree_Dataset_R1
 from Model_old import ResNet50Encoder
 from utils import set_seed, Dataset_from_feature, SplitDataset, CosineSimilarityLoss
+from model_base import InvariantGenerator
 
 CUDA0 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -31,12 +32,22 @@ def get_argument_parse():
     parse.add_argument('--feature_channels', type=int, default=1, help="")  # TODO: complete the help
     parse.add_argument('--dim_mults', type=tuple, default=(1, 2, 4), help='dims of ?')  # TODO: complete the help
     parse.add_argument('--dr', type=float, default=0.5, help='dropout rate of classifier')
+    parse.add_argument('--betas', type=str, default='0.5,0.999',
+                        help='Adam optimizer betas parameters (beta1,beta2). Default: 0.5,0.999')
     parse.add_argument('--log_dir', default='./logs')
     args = parse.parse_args()
+    # 转换 betas 字符串为浮点数元组
+    try:
+        args.betas = tuple(map(float, args.betas.split(',')))
+        if len(args.betas) != 2:
+            raise ValueError
+    except:
+        raise argparse.ArgumentTypeError(
+            "betas must be two comma-separated floats (e.g. '0.5,0.999')")
     return args
 
 
-def trian(args):
+def train(args):
     # setting init
     torch.set_float32_matmul_precision('medium')
     set_seed(args.seed)
@@ -52,4 +63,4 @@ def trian(args):
 
 if __name__ == '__main__':
     args = get_argument_parse()
-    trian(args)
+    train(args)
