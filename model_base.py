@@ -6,6 +6,78 @@ import pytorch_lightning as pl
 from utils import cosine_annealing_schedule
 
 
+class Discriminator(nn.Module):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+        # 定义判别器的网络结构
+        self.model = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(256, 512, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.BatchNorm2d(512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(512, 1, kernel_size=(3, 3), stride=(2, 2), padding=1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # 前向传播
+        x = x.float()
+        output = self.model(x)
+        return output.view(-1, 1)
+
+
+class Classifier(nn.Module):
+    """A simple convolutional neural network with residual connections."""
+    def __init__(self, args):
+        super(Classifier, self).__init__()
+        self.upsample_factor = 2
+        self.model = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Dropout(0.1),
+            nn.ReLU(),
+            self._make_residual_block(16, 16),
+            self._make_residual_block(16, 16),
+            nn.Conv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Dropout(0.2),
+            nn.ReLU(),
+            self._make_residual_block(32, 32),
+            self._make_residual_block(32, 32),
+            nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Dropout(0.3),
+            nn.ReLU(),
+            self._make_residual_block(64, 64),
+            self._make_residual_block(64, 64)
+        )
+        self.upsample = nn.Upsample(scale_factor=self.upsample_factor, mode='bilinear', align_corners=True)
+        self.final = nn.Conv2d(64, 1, kernel_size=(3, 3), stride=(1, 1), padding=1)
+
+    def _make_residual_block(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Dropout(0.1),
+            nn.ReLU(),
+            nn.Conv2d(out_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Dropout(0.1)
+        )
+
+    def forward(self, x):
+        identity = x
+        x = self.model(x)
+        x = x + identity
+        x = self.upsample(x)  # [batch_size, 64, 64, 64]
+        x = self.upsample(x)  # [batch_size, 64, 128, 128]
+
+        x = x[:, :, 48:80, 48:80]
+
+        x = self.final(x)  # [batch_size, 1, 32, 32]
+        return x
 
 
 class InvariantGenerator(pl.LightningModule):
