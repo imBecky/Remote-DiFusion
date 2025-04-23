@@ -338,3 +338,4 @@ def CalculateParameters(model_dict):
     for i, model in enumerate(model_dict):
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f'模型总参数数量: {num_params}')
+
