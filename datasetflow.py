@@ -3,8 +3,8 @@ import h5py
 import numpy as np
 import torch
 from torch.nn import functional as F
-from torch.utils.data import Dataset, Subset
-
+from torch.utils.data import Dataset, Subset, random_split, DataLoader
+import pytorch_lightning as pl
 
 CUDA0 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,6 +29,7 @@ class CustomDataset(Dataset):
     """
     ============= Dataset Class implementation =============
     """
+
     def __init__(self, data_dict, label, patch_size=256, stride=128, transform=None):
         self.data_dict = data_dict
         self.rgb = data_dict['rgb']
@@ -132,4 +133,36 @@ dataset_path = './dataset/SZUTreeData2.0/SZUTreeDataset_Upsampled.pt'
 label_path = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/Annotations_SZUTreeData_R1' \
              '/SZUTreeData_R1_typeid_with_labels_5cm.mat '
 SZUTree_Dataset_R1 = get_SZUTree_R1_dataset(dataset_path, label_path)
-SZUTree_Dataset_R1_subset = Subset(SZUTree_Dataset_R1, indices=range(2))
+SZUTree_Dataset_R1_subset = Subset(SZUTree_Dataset_R1, indices=range(4))
+train_size = int(0.6 * len(SZUTree_Dataset_R1_subset))
+val_size = int(0.2 * len(SZUTree_Dataset_R1_subset))
+test_size = len(SZUTree_Dataset_R1_subset) - train_size - val_size
+
+SZUTree_train_set, SZUTree_val_set, SZUTree_test_set = random_split(
+    SZUTree_Dataset_R1_subset, [train_size, val_size, test_size],
+    generator=torch.Generator().manual_seed(42)  # 固定随机种子
+)
+
+
+class MyDataModule(pl.LightningDataModule):
+    def __init__(self, train_set, val_set, test_set, bs):
+        super().__init__()
+        self.train_set = train_set
+        self.val_set = val_set
+        self.test_set = test_set
+        self.bs = bs
+
+    def train_dataloader(self):
+        return DataLoader(self.train_set, batch_size=self.bs, shuffle=True, num_workers=4)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_set, batch_size=self.bs, shuffle=False, num_workers=2)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_set, batch_size=self.bs, shuffle=False, num_workers=2)
+
+
+def get_data_module(name, bs):
+    if name == "SZU_R1":
+        data_module = MyDataModule(SZUTree_train_set, SZUTree_val_set, SZUTree_test_set, bs)
+        return data_module
