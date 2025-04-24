@@ -131,33 +131,47 @@ class Discriminator(nn.Module):
         return output
 
 
+import torch
+import torch.nn as nn
+
+
 class Classifier(nn.Module):
     """A simple convolutional neural network with residual connections."""
 
     def __init__(self, pos_shape, latent_dim=1, num_heads=1):
         super(Classifier, self).__init__()
+        self.pos_shape = pos_shape
         self.attention = nn.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads)
-        self.pos_encoding = nn.Parameter(torch.randn(1, latent_dim, pos_shape[0], pos_shape[1]))
-        self.upsample_factor = 2
-        self.model = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=(3, 3), stride=(1, 1), padding=1),
+        self.pos_encoding = nn.Parameter(torch.randn(1, latent_dim, pos_shape, pos_shape))
+
+        # 修改后的上采样部分
+        self.initial_upsample = nn.Sequential(
+            nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True),  # 32x32 → 256x256
+            nn.Conv2d(1, 32, kernel_size=(3, 3), padding=1)  # 增加通道数
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.Dropout(0.1),
             nn.ReLU(),
-            self._make_residual_block(16, 16),
-            self._make_residual_block(16, 16),
-            nn.Conv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            self._make_residual_block(64, 64),
+            self._make_residual_block(64, 64),
+            nn.Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.Dropout(0.2),
             nn.ReLU(),
-            self._make_residual_block(32, 32),
-            self._make_residual_block(32, 32),
-            nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            self._make_residual_block(128, 128),
+            self._make_residual_block(128, 128),
+            nn.Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.Dropout(0.3),
             nn.ReLU(),
-            self._make_residual_block(64, 64),
-            self._make_residual_block(64, 64)
+            self._make_residual_block(256, 256),
+            self._make_residual_block(256, 256),
+            nn.Conv2d(256, 128, kernel_size=(3, 3), padding=1),
+            nn.ReLU(),
+            nn.Conv2d(128, 64, kernel_size=(3, 3), padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 20, kernel_size=(1, 1))  # 输出单通道分类结果
         )
-        self.upsample = nn.Upsample(scale_factor=self.upsample_factor, mode='bilinear', align_corners=True)
-        self.final = nn.Conv2d(64, 1, kernel_size=(3, 3), stride=(1, 1), padding=1)
 
     def _make_residual_block(self, in_channels, out_channels):
         return nn.Sequential(
@@ -165,32 +179,41 @@ class Classifier(nn.Module):
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding=1),
-            nn.Dropout(0.1)
+            nn.Dropout(0.1),
+            nn.ReLU()
         )
 
     def forward(self, rgb, hsi, lidar):
         batch_size = rgb.shape[0]
         embed_dim = rgb.shape[1]
+
+        # 添加位置编码
         rgb = rgb + self.pos_encoding
         hsi = hsi + self.pos_encoding
         lidar = lidar + self.pos_encoding
+
         # 展平空间维度 [B, embed_dim, 32 * 32]
-        rgb = rgb.flatten(2).permute(2, 0, 1)  # x.flatten(2) means flatten 2nd+ dimension->[B, dim, w*h]->[w*h, B, dim]
+        rgb = rgb.flatten(2).permute(2, 0, 1)
         hsi = hsi.flatten(2).permute(2, 0, 1)
         lidar = lidar.flatten(2).permute(2, 0, 1)
-        modal_cat = torch.cat([rgb, hsi, lidar], dim=0)     # [3*w*h, B, dim]
-        # (Q, K, V) = (x, x, x)
+
+        # 拼接模态
+        modal_cat = torch.cat([rgb, hsi, lidar], dim=0)  # [3*w*h, B, dim]
+
+        # 注意力机制
         attn_output, _ = self.attention(modal_cat, modal_cat, modal_cat)
+
         # 取均值并恢复形状
-        attn_output = attn_output.mean(0).permute(1, 2, 0).view(batch_size, embed_dim, 32, 32)
+        attn_output = attn_output.view(3, self.pos_shape * self.pos_shape, batch_size, embed_dim)
+        attn_output = torch.mean(attn_output, dim=0)
+        attn_output = attn_output.permute(1, 2, 0).view(batch_size, 1, 32, 32)
+
+        # 初始上采样到256x256
+        x = self.initial_upsample(attn_output)
+
         # classify
-        identity = attn_output
-        x = self.model(attn_output)
-        x = x + identity
-        x = self.upsample(x)  # [batch_size, 64, 64, 64]
-        x = self.upsample(x)  # [batch_size, 64, 128, 128]
-        x = x[:, :, 48:80, 48:80]
-        x = self.final(x)  # [batch_size, 1, 32, 32]
+        x = self.classifier(x)
+        x = x.squeeze()
         return x
 
 
@@ -202,7 +225,7 @@ class InvariantGenerator(pl.LightningModule):
         self.encoder_lidar = None
         self.adapter = VAE()
         self.discriminator = Discriminator()
-        self.classifier = Classifier((32, 32))              # TODO: 不要写死，要传入特征的宽和高
+        self.classifier = Classifier(32)
         self.ce = None
         self.args = args
         self.automatic_optimization = False
@@ -222,12 +245,15 @@ class InvariantGenerator(pl.LightningModule):
         return real_rgb, real_hsi, real_lidar, fake_rgb, fake_hsi, fake_lidar
 
     def _generator_loss(self, fake_output_rgb, fake_output_hsi, fake_output_lidar):
-        loss1 = (F.cross_entropy(fake_output_rgb, self.modality_label_hsi) +
-                 F.cross_entropy(fake_output_rgb, self.modality_label_lidar)) / 2
-        loss2 = (F.cross_entropy(fake_output_hsi, self.modality_label_rgb) +
-                 F.cross_entropy(fake_output_hsi, self.modality_label_lidar)) / 2
-        loss3 = (F.cross_entropy(fake_output_lidar, self.modality_label_rgb) +
-                 F.cross_entropy(fake_output_lidar, self.modality_label_hsi)) / 2
+        loss1 = (F.cross_entropy(fake_output_rgb, self.modality_label_rgb) +
+                 F.cross_entropy(fake_output_rgb, self.modality_label_hsi) +
+                 F.cross_entropy(fake_output_rgb, self.modality_label_lidar)) / 3
+        loss2 = (F.cross_entropy(fake_output_rgb, self.modality_label_rgb) +
+                 F.cross_entropy(fake_output_rgb, self.modality_label_hsi) +
+                 F.cross_entropy(fake_output_rgb, self.modality_label_lidar)) / 3
+        loss3 = (F.cross_entropy(fake_output_rgb, self.modality_label_rgb) +
+                 F.cross_entropy(fake_output_rgb, self.modality_label_hsi) +
+                 F.cross_entropy(fake_output_rgb, self.modality_label_lidar)) / 3
         return (loss1 + loss2 + loss3) / 3
 
     def _discriminator_loss(self, real_output_rgb, fake_output_rgb,
@@ -251,6 +277,7 @@ class InvariantGenerator(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         data_dict, gt = batch
+        gt = gt.long()
         opt_d, opt_g, opt_c = self.optimizers()
         # training every modality with self() forward
         encoded_rgb, encoded_hsi, encoded_lidar, fake_rgb, fake_hsi, fake_lidar = self(data_dict)

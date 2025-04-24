@@ -7,4 +7,5 @@ log.md
 dataset/
 logs/
 __pycache__/
-Model_old
+Model_old.py
+test.py

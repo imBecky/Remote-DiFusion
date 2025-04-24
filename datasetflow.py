@@ -132,4 +132,4 @@ dataset_path = './dataset/SZUTreeData2.0/SZUTreeDataset_Upsampled.pt'
 label_path = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/Annotations_SZUTreeData_R1' \
              '/SZUTreeData_R1_typeid_with_labels_5cm.mat '
 SZUTree_Dataset_R1 = get_SZUTree_R1_dataset(dataset_path, label_path)
-SZUTree_Dataset_R1_subset = Subset(SZUTree_Dataset_R1, indices=range(16))
+SZUTree_Dataset_R1_subset = Subset(SZUTree_Dataset_R1, indices=range(2))
