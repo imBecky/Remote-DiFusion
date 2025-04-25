@@ -333,6 +333,52 @@ class InvariantGenerator(pl.LightningModule):
             'cls_loss': cls_loss
         }
 
+    def validation_step(self, batch, batch_idx):
+        data_dict, gt = batch
+        gt = gt.long()
+
+        # 前向传播
+        _, _, _, fake_rgb, fake_hsi, fake_lidar = self(data_dict)
+
+        # 计算分类结果
+        cls_pred = self.classifier(fake_rgb, fake_hsi, fake_lidar).squeeze(0)
+        cls_loss = self._cls_loss(cls_pred, gt)
+
+        # 计算准确率
+        acc = (cls_pred.argmax(dim=1) == gt).float().mean()
+
+        # 记录指标
+        self.log('val_cls_loss', cls_loss, prog_bar=True)
+        self.log('val_cls_acc', acc, prog_bar=True)
+
+        return {
+            'val_cls_loss': cls_loss,
+            'val_cls_acc': acc
+        }
+
+    def test_step(self, batch, batch_idx):
+        data_dict, gt = batch
+        gt = gt.long()
+
+        # 前向传播
+        _, _, _, fake_rgb, fake_hsi, fake_lidar = self(data_dict)
+
+        # 计算分类结果
+        cls_pred = self.classifier(fake_rgb, fake_hsi, fake_lidar).squeeze(0)
+        cls_loss = self._cls_loss(cls_pred, gt)
+
+        # 计算准确率
+        acc = (cls_pred.argmax(dim=1) == gt).float().mean()
+
+        # 记录指标
+        self.log('test_cls_loss', cls_loss, prog_bar=True)
+        self.log('test_cls_acc', acc, prog_bar=True)
+
+        return {
+            'test_cls_loss': cls_loss,
+            'test_cls_acc': acc
+        }
+
     def configure_optimizers(self):
         lr_gan = self.args.lr3
         lr_cls = self.args.lr2
