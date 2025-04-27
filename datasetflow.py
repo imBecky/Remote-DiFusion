@@ -136,7 +136,7 @@ label_path = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/Annotations_SZUTreeDat
 SZUTreeDataset_Upsampled = upsample_and_save()
 SZUTree_Dataset_R1 = get_SZUTree_R1_dataset(SZUTreeDataset_Upsampled, label_path)
 SZUTree_Dataset_R1_subset = Subset(SZUTree_Dataset_R1, indices=range(256))
-using_dataset = SZUTree_Dataset_R1_subset
+using_dataset = SZUTree_Dataset_R1
 train_size = int(0.6 * len(using_dataset))
 val_size = int(0.2 * len(using_dataset))
 test_size = len(using_dataset) - train_size - val_size

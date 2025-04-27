@@ -45,7 +45,7 @@ def train(args):
                               max_epochs=args.epoch,
                               callbacks=[checkpointer, early_stop_callback],
                               logger=logger,
-                              log_every_n_steps=1,  # 每1步记录一次日志 TODO: small batch training
+                              log_every_n_steps=50,  # 每1步记录一次日志 TODO: small batch training
                               check_val_every_n_epoch=1  # 每1个epoch验证一次
                               )
             module = InvariantGenerator(args)
@@ -58,5 +58,5 @@ def train(args):
 if __name__ == '__main__':
     args = args
     args.trial_run = 1
-    # print(args)
+    print(f'args:{args}')
     train(args)
