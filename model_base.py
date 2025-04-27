@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torchvision.models import resnet50
-from torchvision.models import ResNet50_Weights
+from torchvision.models import resnet18
+from torchvision.models import ResNet18_Weights
 
 from utils import Reshape
 
@@ -11,33 +11,25 @@ CUDA0 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class MyEncoder(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self):
         super(MyEncoder, self).__init__()
-        self.input_dim = input_dim
         self.encoder = self.gen_encoder()
         self.reshape = Reshape((1, 32, 32))
 
     def gen_encoder(self):
-        encoder = resnet50(weights=ResNet50_Weights.DEFAULT).eval()
-        encoder.conv1 = torch.nn.Conv2d(self.input_dim, 64, kernel_size=(7, 7), stride=(2, 2), padding=3, bias=False)
-        encoder.fc = torch.nn.Linear(2048, 1024, bias=True)
+        encoder = resnet18(weights=ResNet18_Weights.DEFAULT).eval()
+        encoder.conv1 = torch.nn.Conv2d(32, 64, kernel_size=(7, 7), stride=(2, 2), padding=3, bias=False)
+        encoder.fc = torch.nn.Linear(512, 1024, bias=True)
         return encoder
 
     def forward(self, x):
         x = x.float()
+        input_dim = x.shape[1]
+        head = torch.nn.Conv2d(input_dim, 32, kernel_size=(7, 7), stride=(2, 2), padding=3, bias=False).to(CUDA0)
+        x = head(x)
         x = self.encoder(x)
         x = self.reshape(x)
         return x
-
-
-def init_encoders(dataset):
-    if dataset == "SZU_R1":
-        encoder_rgb = MyEncoder(3)
-        encoder_hsi = MyEncoder(98)
-        encoder_lidar = MyEncoder(1)
-        return encoder_rgb, encoder_hsi, encoder_lidar
-    else:
-        pass
 
 
 class VAE(nn.Module):
@@ -131,10 +123,6 @@ class Discriminator(nn.Module):
         return output
 
 
-import torch
-import torch.nn as nn
-
-
 class Classifier(nn.Module):
     """A simple convolutional neural network with residual connections."""
 
@@ -170,7 +158,7 @@ class Classifier(nn.Module):
             nn.ReLU(),
             nn.Conv2d(128, 64, kernel_size=(3, 3), padding=1),
             nn.ReLU(),
-            nn.Conv2d(64, 20, kernel_size=(1, 1))  # 输出单通道分类结果
+            nn.Conv2d(64, 21, kernel_size=(1, 1))  # 输出单通道分类结果
         )
 
     def _make_residual_block(self, in_channels, out_channels):
@@ -220,9 +208,7 @@ class Classifier(nn.Module):
 class InvariantGenerator(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
-        self.encoder_rgb = None
-        self.encoder_hsi = None
-        self.encoder_lidar = None
+        self.encoder = None
         self.adapter = VAE()
         self.discriminator = Discriminator()
         self.classifier = Classifier(32)
@@ -234,13 +220,13 @@ class InvariantGenerator(pl.LightningModule):
         self.modality_label_hsi = torch.ones(args.bs, dtype=torch.long).to(CUDA0)
         self.modality_label_lidar = (torch.ones(args.bs, dtype=torch.long) * 2).to(CUDA0)
         # definition of modal one-hot label
-        self.encoder_rgb, self.encoder_hsi, self.encoder_lidar = init_encoders(args.dataset)
+        self.encoder = MyEncoder()
 
     def forward(self, data_dict):
         real_rgb, real_hsi, real_lidar = data_dict['rgb'].float(), data_dict['hsi'].float(), data_dict['lidar'].float()
-        real_rgb = self.encoder_rgb(real_rgb)
-        real_hsi = self.encoder_hsi(real_hsi)
-        real_lidar = self.encoder_lidar(real_lidar)
+        real_rgb = self.encoder(real_rgb)
+        real_hsi = self.encoder(real_hsi)
+        real_lidar = self.encoder(real_lidar)
         fake_rgb, fake_hsi, fake_lidar = self.adapter(real_rgb), self.adapter(real_hsi), self.adapter(real_lidar)
         return real_rgb, real_hsi, real_lidar, fake_rgb, fake_hsi, fake_lidar
 
@@ -248,12 +234,12 @@ class InvariantGenerator(pl.LightningModule):
         loss1 = (F.cross_entropy(fake_output_rgb, self.modality_label_rgb) +
                  F.cross_entropy(fake_output_rgb, self.modality_label_hsi) +
                  F.cross_entropy(fake_output_rgb, self.modality_label_lidar)) / 3
-        loss2 = (F.cross_entropy(fake_output_rgb, self.modality_label_rgb) +
-                 F.cross_entropy(fake_output_rgb, self.modality_label_hsi) +
-                 F.cross_entropy(fake_output_rgb, self.modality_label_lidar)) / 3
-        loss3 = (F.cross_entropy(fake_output_rgb, self.modality_label_rgb) +
-                 F.cross_entropy(fake_output_rgb, self.modality_label_hsi) +
-                 F.cross_entropy(fake_output_rgb, self.modality_label_lidar)) / 3
+        loss2 = (F.cross_entropy(fake_output_hsi, self.modality_label_rgb) +
+                 F.cross_entropy(fake_output_hsi, self.modality_label_hsi) +
+                 F.cross_entropy(fake_output_hsi, self.modality_label_lidar)) / 3
+        loss3 = (F.cross_entropy(fake_output_lidar, self.modality_label_rgb) +
+                 F.cross_entropy(fake_output_lidar, self.modality_label_hsi) +
+                 F.cross_entropy(fake_output_lidar, self.modality_label_lidar)) / 3
         return (loss1 + loss2 + loss3) / 3
 
     def _discriminator_loss(self, real_output_rgb, fake_output_rgb,

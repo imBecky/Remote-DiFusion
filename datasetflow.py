@@ -53,21 +53,21 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         """根据索引返回单个样本（数据和标签）"""
 
-        h_idx = idx // self.num_patches_h
-        w_idx = idx // self.num_patches_w
+        h_idx = idx // self.num_patches_w  # 行索引
+        w_idx = idx % self.num_patches_w  # 列索引
         # 计算patch的起始位置
         h_start = h_idx * self.stride
         w_start = w_idx * self.stride
 
         if self.transform:
-            self.rgb = self.transform(self.rgb)
-            self.hsi = self.transform(self.hsi)
-            self.lidar = self.transform(self.lidar)
+            self.rgb = self.transform(self.rgb).to(CUDA0)
+            self.hsi = self.transform(self.hsi).to(CUDA0)
+            self.lidar = self.transform(self.lidar).to(CUDA0)
 
         rgb_patch = self.rgb[:, h_start:h_start + self.patch_size, w_start:w_start + self.patch_size]
         hsi_patch = self.hsi[:, h_start:h_start + self.patch_size, w_start:w_start + self.patch_size]
         lidar_patch = self.lidar[:, h_start:h_start + self.patch_size, w_start:w_start + self.patch_size]
-        label_patch = self.label[h_start:h_start + self.patch_size, w_start:w_start + self.patch_size]
+        label_patch = self.label[h_start:h_start + self.patch_size, w_start:w_start + self.patch_size].to(CUDA0)
 
         data_dict = {'rgb': rgb_patch,
                      'hsi': hsi_patch,
@@ -114,11 +114,12 @@ def upsample_and_save():
     rgb = sio.loadmat(file_path_RGB)['data']
     szu_data_dict['rgb'] = torch.from_numpy(rgb)
     SZUTreeDataset_Upsampled = align_modalities(szu_data_dict)
-    torch.save(SZUTreeDataset_Upsampled, 'SZUTreeDataset_Upsampled.pt')
+    # torch.save(SZUTreeDataset_Upsampled, 'SZUTreeDataset_Upsampled.pt')
+    return SZUTreeDataset_Upsampled
 
 
-def get_SZUTree_R1_dataset(dataset_path, label_path):
-    data_dict = torch.load(dataset_path, weights_only=True)
+def get_SZUTree_R1_dataset(Dataset, label_path):
+    data_dict = Dataset
     data_dict['hsi'] = data_dict['hsi'].to(torch.uint16).to(CUDA0)
     data_dict['lidar'] = data_dict['lidar'].to(torch.uint16).to(CUDA0)
     data_dict['rgb'] = data_dict['rgb'].to(CUDA0)
@@ -131,16 +132,18 @@ def get_SZUTree_R1_dataset(dataset_path, label_path):
 
 dataset_path = './dataset/SZUTreeData2.0/SZUTreeDataset_Upsampled.pt'
 label_path = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/Annotations_SZUTreeData_R1' \
-             '/SZUTreeData_R1_typeid_with_labels_5cm.mat '
-SZUTree_Dataset_R1 = get_SZUTree_R1_dataset(dataset_path, label_path)
-SZUTree_Dataset_R1_subset = Subset(SZUTree_Dataset_R1, indices=range(4))
-train_size = int(0.6 * len(SZUTree_Dataset_R1_subset))
-val_size = int(0.2 * len(SZUTree_Dataset_R1_subset))
-test_size = len(SZUTree_Dataset_R1_subset) - train_size - val_size
+             '/SZUTreeData_R1_typeid_with_labels_5cm'
+SZUTreeDataset_Upsampled = upsample_and_save()
+SZUTree_Dataset_R1 = get_SZUTree_R1_dataset(SZUTreeDataset_Upsampled, label_path)
+SZUTree_Dataset_R1_subset = Subset(SZUTree_Dataset_R1, indices=range(256))
+using_dataset = SZUTree_Dataset_R1_subset
+train_size = int(0.6 * len(using_dataset))
+val_size = int(0.2 * len(using_dataset))
+test_size = len(using_dataset) - train_size - val_size
 
 SZUTree_train_set, SZUTree_val_set, SZUTree_test_set = random_split(
-    SZUTree_Dataset_R1_subset, [train_size, val_size, test_size],
-    generator=torch.Generator().manual_seed(42)  # 固定随机种子
+    using_dataset, [train_size, val_size, test_size],
+    generator=torch.Generator()
 )
 
 
@@ -153,13 +156,13 @@ class MyDataModule(pl.LightningDataModule):
         self.bs = bs
 
     def train_dataloader(self):
-        return DataLoader(self.train_set, batch_size=self.bs, shuffle=True, num_workers=4)
+        return DataLoader(self.train_set, batch_size=self.bs, shuffle=True, drop_last=True, num_workers=0)
 
     def val_dataloader(self):
-        return DataLoader(self.val_set, batch_size=self.bs, shuffle=False, num_workers=2)
+        return DataLoader(self.val_set, batch_size=self.bs, shuffle=False, drop_last=True, num_workers=0)
 
     def test_dataloader(self):
-        return DataLoader(self.test_set, batch_size=self.bs, shuffle=False, num_workers=2)
+        return DataLoader(self.test_set, batch_size=self.bs, shuffle=False, drop_last=True, num_workers=0)
 
 
 def get_data_module(name, bs):

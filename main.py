@@ -8,15 +8,18 @@ from datasetflow import data_report, get_data_module
 from config import args
 from utils import set_seed
 from model_base import InvariantGenerator
+import os
+print(os.getcwd())
 
 CUDA0 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+CUDA_LAUNCH_BLOCKING = 1
 
 
 def train(args):
     # setting init
     torch.set_float32_matmul_precision('medium')
     set_seed(args.seed)
-    checkpointer = ModelCheckpoint(dirpath=f"logs/trial{args.trial_run}/"+'model-{epoch:02d}-{val_cls_acc:.2f}',
+    checkpointer = ModelCheckpoint(dirpath=f"logs/trial{args.trial_run}/",
                                    filename='latest',
                                    monitor="val_cls_acc",
                                    save_last=True,
@@ -41,7 +44,6 @@ def train(args):
                               devices='auto',
                               max_epochs=args.epoch,
                               callbacks=[checkpointer, early_stop_callback],
-                              deterministic=True,
                               logger=logger,
                               log_every_n_steps=1,  # 每1步记录一次日志 TODO: small batch training
                               check_val_every_n_epoch=1  # 每1个epoch验证一次

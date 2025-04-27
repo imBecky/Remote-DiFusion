@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-trial_run=0
+trial_run=1
 echo "Runing${trial_run} Training Script, trial_run${trial_run}"
 dataset="SZU_R1"  # SZU_R1, SZU_R2 or Houston
 epoch=30
@@ -12,10 +12,9 @@ log_dir=""
 lr1=0.001 # learning rate for noise predictor
 lr2=0.001 # learning rate for classifier
 lr3=0.0002 # learning rate for GAN
-betas=(0.5, 0.999)
-bs=4
+betas=0.5,0.999
+bs=16
 feature_channels=1
-dim_mults=(1, 2, 4,)
 dr=0.5
 log_dir="./logs/run${trial_run}/lr1_${lr1}/lr2_${lr2}/lr3_${lr3}_bs${bs}"
 
