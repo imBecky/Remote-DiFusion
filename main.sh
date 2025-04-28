@@ -16,7 +16,12 @@ feature_channels=1
 dr=0.5
 log_dir="./logs/run${trial_run}/lr1_${lr1}/lr2_${lr2}/lr3_${lr3}_bs${bs}"
 python main.py --feature_channels $feature_channels --trial_run $trial_run --dataset $dataset --epoch $epoch --seed $seed --T $T --image_size $image_size --lr1 $lr1 --lr2 $lr2 --lr3 $lr3 --bs $bs --dr $dr --log_dir $log_dir
-for lr3 in 0.00002
+for lr2 in 0.0001 0.001 0.01 0.1;do
+  for lr3 in 0.00001 0.0001 0.001 0.01;do
+    log_dir="./logs/run${trial_run}/lr1_${lr1}/lr2_${lr2}/lr3_${lr3}_bs${bs}"
+    python main.py --feature_channels $feature_channels --trial_run $trial_run --dataset $dataset --epoch $epoch --seed $seed --T $T --image_size $image_size --lr1 $lr1 --lr2 $lr2 --lr3 $lr3 --bs $bs --dr $dr --log_dir $log_dir
+  done
+done
 # 遍历不同学习率和批量大小
 #for lr1 in 0.001 0.01 0.1; do
 #  for lr2 in 0.001 0.01 0.1; do
