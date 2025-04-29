@@ -28,10 +28,10 @@ def train(args):
                                    save_top_k=True)
     early_stop_callback = EarlyStopping(
         monitor='val_cls_acc',
-        patience=10,  # 10个epoch没有改善就停止
+        patience=50,  # 10个epoch没有改善就停止
         mode='max'
     )
-    logger = TensorBoardLogger("logs", name=f'Trial{args.trial_run}-{args.dataset}')
+    logger = TensorBoardLogger("../tf-logs", name=f'Trial{args.trial_run}-{args.dataset}')
     if args.trial_run == 0:
         """Data Report of small dataset"""
         data_report(args.dataset)
