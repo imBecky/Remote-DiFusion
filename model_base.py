@@ -32,6 +32,24 @@ class MyEncoder(nn.Module):
         return x
 
 
+class MyDecoder(nn.Module):
+    def __init__(self, latent_dim):
+        super(MyDecoder, self).__init__()
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 64 * 8 * 8),
+            nn.ReLU(),
+            nn.Unflatten(1, (64, 8, 8)),
+            nn.ConvTranspose2d(64, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), output_padding=(1, 1)),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        return self.decoder(x)
+
+
+
 class VAE(nn.Module):
     def __init__(self, latent_dim=20):
         super(VAE, self).__init__()
@@ -208,7 +226,6 @@ class Classifier(nn.Module):
 class InvariantGenerator(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
-        self.encoder = None
         self.adapter = VAE()
         self.discriminator = Discriminator()
         self.classifier = Classifier(32)
@@ -376,3 +393,80 @@ class InvariantGenerator(pl.LightningModule):
 
         # 返回三个优化器，按顺序执行
         return [opt_d, opt_g, opt_c]
+
+
+class Module2(pl.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.encoder = MyEncoder()
+        self.decoder_rgb = MyDecoder(1000)
+        self.decoder_hsi = MyDecoder(1000)
+        self.decoder_lidar = MyDecoder(1000)
+        self.classifier = Classifier(32)
+        self.ce = None # cross entropy loss
+
+    def forward(self, data_dict):
+        rgb, hsi, lidar = data_dict['rgb'].float(), data_dict['hsi'].float(), data_dict['lidar'].float()
+        encoded_rgb, encoded_hsi, encoded_lidar = self.encoder(rgb), self.encoder(hsi), self.encoder(lidar)
+        decoded_rgb = self.decoder_rgb(encoded_rgb)
+        decoded_hsi = self.decoder_hsi(encoded_hsi)
+        decoded_lidar = self.decoder_lidar(encoded_lidar)
+        pred_rgb, pred_hsi, pred_lidar = (self.classifier(decoded_rgb),
+                                          self.classifier(decoded_hsi),
+                                          self.classifier(decoded_lidar))
+        return pred_rgb, pred_hsi, pred_lidar
+
+    def _cls_loss(self, cls_pred, gt, class_weight=None, label_smoothing=0.1):
+        if class_weight:
+            self.ce = nn.CrossEntropyLoss(weight=class_weight, label_smoothing=label_smoothing)
+        else:
+            self.ce = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+        loss = self.ce(cls_pred, gt)
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        data_dict, gt = batch
+        gt = gt.long()
+        pred_rgb, pred_hsi, pred_lidar = self.forward(data_dict)
+        loss_rgb = self._cls_loss(pred_rgb, gt)
+        loss_hsi = self._cls_loss(pred_hsi, gt)
+        loss_lidar = self._cls_loss(pred_lidar, gt)
+        loss = (loss_rgb + loss_hsi + loss_lidar) / 3
+        self.log('train_loss', loss.item(), prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        data_dict, gt = batch
+        gt = gt.long()
+        pred_rgb, pred_hsi, pred_lidar = self.forward(data_dict)
+        loss_rgb = self._cls_loss(pred_rgb, gt)
+        loss_hsi = self._cls_loss(pred_hsi, gt)
+        loss_lidar = self._cls_loss(pred_lidar, gt)
+        loss = (loss_rgb + loss_hsi + loss_lidar) / 3
+        acc_rgb = (pred_rgb.argmax(dim=1) == gt).float().mean()
+        acc_hsi = (pred_hsi.argmax(dim=1) == gt).float().mean()
+        acc_lidar = (pred_lidar.argmax(dim=1) == gt).float().mean()
+        avg_acc = (acc_rgb + acc_hsi + acc_lidar) / 3
+        self.log('val_acc', avg_acc.item(), prog_bar=True)
+        self.log('val_loss', loss.item(), prog_bar=True)
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        data_dict, gt = batch
+        gt = gt.long()
+        pred_rgb, pred_hsi, pred_lidar = self.forward(data_dict)
+        loss_rgb = self._cls_loss(pred_rgb, gt)
+        loss_hsi = self._cls_loss(pred_hsi, gt)
+        loss_lidar = self._cls_loss(pred_lidar, gt)
+        loss = (loss_rgb + loss_hsi + loss_lidar) / 3
+        acc_rgb = (pred_rgb.argmax(dim=1) == gt).float().mean()
+        acc_hsi = (pred_hsi.argmax(dim=1) == gt).float().mean()
+        acc_lidar = (pred_lidar.argmax(dim=1) == gt).float().mean()
+        avg_acc = (acc_rgb + acc_hsi + acc_lidar) / 3
+        self.log('test_acc', avg_acc.item(), prog_bar=True)
+        self.log('test_loss', loss.item(), prog_bar=True)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer

@@ -1,5 +1,5 @@
 #!/bin/bash
-trial_run=2
+trial_run=1
 echo "Runing${trial_run} Training Script, trial_run${trial_run}"
 dataset="SZU_R1"  # SZU_R1, SZU_R2 or Houston
 epoch=30

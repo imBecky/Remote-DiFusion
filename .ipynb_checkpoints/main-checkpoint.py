@@ -19,7 +19,7 @@ def train(args):
     # setting init
     torch.set_float32_matmul_precision('medium')
     set_seed(args.seed)
-    checkpointer = ModelCheckpoint(dirpath=f"../tf-logs/trial{args.trial_run}/",
+    checkpointer = ModelCheckpoint(dirpath=f"../logs/trial{args.trial_run}/",
                                    filename='latest',
                                    monitor="val_cls_acc",
                                    save_last=True,
@@ -28,7 +28,7 @@ def train(args):
                                    save_top_k=True)
     early_stop_callback = EarlyStopping(
         monitor='val_cls_acc',
-        patience=10,  # 10个epoch没有改善就停止
+        patience=50,  # 10个epoch没有改善就停止
         mode='max'
     )
     logger = TensorBoardLogger("../tf-logs", name=f'Trial{args.trial_run}-{args.dataset}')
@@ -73,5 +73,6 @@ def train(args):
 
 if __name__ == '__main__':
     args = args
+    args.trial_run = 1
     print(f'args:{args}')
     train(args)
