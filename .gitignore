@@ -10,5 +10,5 @@ __pycache__/
 Model_old.py
 test.py
 .gitignore
+id_rsa
 id_rsa.pub
-id_rsa.pub.pub
