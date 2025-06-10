@@ -95,9 +95,9 @@ rgb data and labels can be loaded simply via sio.loadmat()
 
 
 def upsample_and_save():
-    file_path_RGB = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/SZUTree_RGB_R1/SZUTreeRGB_R1.mat'
-    file_path_HSI = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/SZUTree_HSI_R1/data_band98.mat'
-    file_path_CHM = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/SZUTree_CHM_R1/SZUTreeCHM_R1.mat'
+    file_path_RGB = '../autodl-fs/dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/SZUTree_RGB_R1/SZUTreeRGB_R1.mat'
+    file_path_HSI = '../autodl-fs/dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/SZUTree_HSI_R1/data_band98.mat'
+    file_path_CHM = '../autodl-fs/dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/SZUTree_CHM_R1/SZUTreeCHM_R1.mat'
 
     szu_data_dict = {}
     for i, file_path in enumerate([file_path_HSI, file_path_CHM]):
@@ -130,8 +130,8 @@ def get_SZUTree_R1_dataset(Dataset, label_path):
     return Dataset_R1
 
 
-dataset_path = './dataset/SZUTreeData2.0/SZUTreeDataset_Upsampled.pt'
-label_path = './dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/Annotations_SZUTreeData_R1' \
+dataset_path = '../autodl-fs/dataset/SZUTreeData2.0/SZUTreeDataset_Upsampled.pt'
+label_path = '../autodl-fs/dataset/SZUTreeData2.0/SZUTreeData_R1_2.0/Annotations_SZUTreeData_R1' \
              '/SZUTreeData_R1_typeid_with_labels_5cm'
 SZUTreeDataset_Upsampled = upsample_and_save()
 SZUTree_Dataset_R1 = get_SZUTree_R1_dataset(SZUTreeDataset_Upsampled, label_path)
