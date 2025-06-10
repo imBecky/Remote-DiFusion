@@ -64,7 +64,7 @@ def train(args):
                               logger=logger,
                               log_every_n_steps=50,  # 每1步记录一次日志 TODO: small batch training
                               check_val_every_n_epoch=1  # 每1个epoch验证一次
-                            )
+                              )
             trainer.fit(module, datamodule=data_module)
             trainer.test(ckpt_path="best", datamodule=data_module)
     else:

@@ -2,51 +2,70 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torchvision.models import resnet18
-from torchvision.models import ResNet18_Weights
-
-from utils import Reshape
+import torchvision.models as models
 
 CUDA0 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class MyEncoder(nn.Module):
+class PreTrainedEncoder(nn.Module):
     def __init__(self):
-        super(MyEncoder, self).__init__()
+        super(PreTrainedEncoder, self).__init__()
         self.encoder = self.gen_encoder()
-        self.reshape = Reshape((1, 32, 32))
+        # self.reshape = Reshape((1, 32, 32))
 
     def gen_encoder(self):
-        encoder = resnet18(weights=ResNet18_Weights.DEFAULT).eval()
-        encoder.conv1 = torch.nn.Conv2d(32, 64, kernel_size=(7, 7), stride=(2, 2), padding=3, bias=False)
-        encoder.fc = torch.nn.Linear(512, 1024, bias=True)
+        encoder = models.mobilenet_v2(pretrained=True).features
+        encoder.eval()
+        encoder = nn.Sequential(*list(encoder.children())[1:])
+        # print(encoder[-1])
+        # encoder[-1][0] = nn.Linear(320, 1024, bias=True)
         return encoder
 
     def forward(self, x):
         x = x.float()
         input_dim = x.shape[1]
-        head = torch.nn.Conv2d(input_dim, 32, kernel_size=(7, 7), stride=(2, 2), padding=3, bias=False).to(CUDA0)
+        head = nn.Sequential(
+            nn.Conv2d(input_dim, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
+            nn.BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
+            nn.ReLU6(inplace=True)
+        ).to(CUDA0)
         x = head(x)
         x = self.encoder(x)
-        x = self.reshape(x)
+        # x = self.reshape(x)
         return x
+
+# class MyClassifier(nn.Module):
+#     def __init__(self, in_channels, out_channels):
+#         super(MyClassifier, self).__init__()
+#         self.fc = nn.Conv2d(in_channels, out_channels, kernel_size=(7, 7), stride=(2, 2), padding=3, bias=False)
 
 
 class MyDecoder(nn.Module):
     def __init__(self, latent_dim):
         super(MyDecoder, self).__init__()
         self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 256),
+            # (1280, 16, 16)->(512, 16, 16)
+            nn.Conv2d(1280, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
             nn.ReLU(),
-            nn.Linear(256, 64 * 8 * 8),
+            nn.Conv2d(256, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
             nn.ReLU(),
-            nn.Unflatten(1, (64, 8, 8)),
-            nn.ConvTranspose2d(64, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), output_padding=(1, 1)),
-            nn.ReLU()
+            # (256, 16, 16) -> (128, 32, 32)
+            nn.ConvTranspose2d(64, 32, (4,4), (2,2), (1,1)),
+            nn.ReLU(),
+            # (128, 32, 32)->(64, 64, 64)
+            nn.ConvTranspose2d(32, 16, (4,4), (2,2), (1,1)),
+            nn.ReLU(),
+            # (64, 64, 64)->(32, 128, 128)
+            nn.ConvTranspose2d(16, 8, (4,4), (2,2), (1,1)),
+            nn.ReLU(),
+            # (32, 128, 128)->(16, 256, 256)
+            nn.ConvTranspose2d(8, 2, (4,4), (2,2), (1,1)),
+            nn.ReLU(),
         )
 
     def forward(self, x):
-        return self.decoder(x)
+        result = self.decoder(x)
+        return result
 
 
 
@@ -144,7 +163,7 @@ class Discriminator(nn.Module):
 class Classifier(nn.Module):
     """A simple convolutional neural network with residual connections."""
 
-    def __init__(self, pos_shape, latent_dim=1, num_heads=1):
+    def __init__(self, pos_shape, latent_dim, num_heads=1):
         super(Classifier, self).__init__()
         self.pos_shape = pos_shape
         self.attention = nn.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads)
@@ -152,31 +171,28 @@ class Classifier(nn.Module):
 
         # 修改后的上采样部分
         self.initial_upsample = nn.Sequential(
-            nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True),  # 32x32 → 256x256
-            nn.Conv2d(1, 32, kernel_size=(3, 3), padding=1)  # 增加通道数
+            # nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True),  # 32x32 → 256x256
+            nn.Conv2d(1, 16, kernel_size=(3, 3), padding=1)  # 增加通道数
         )
 
         self.classifier = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            nn.Conv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.Dropout(0.1),
             nn.ReLU(),
-            self._make_residual_block(64, 64),
-            self._make_residual_block(64, 64),
-            nn.Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            self._make_residual_block(32, 32),
+            nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.Dropout(0.2),
             nn.ReLU(),
-            self._make_residual_block(128, 128),
-            self._make_residual_block(128, 128),
-            nn.Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=1),
+            self._make_residual_block(64, 64),
+            nn.Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=1),
             nn.Dropout(0.3),
             nn.ReLU(),
-            self._make_residual_block(256, 256),
-            self._make_residual_block(256, 256),
-            nn.Conv2d(256, 128, kernel_size=(3, 3), padding=1),
-            nn.ReLU(),
+            self._make_residual_block(128, 128),
             nn.Conv2d(128, 64, kernel_size=(3, 3), padding=1),
             nn.ReLU(),
-            nn.Conv2d(64, 21, kernel_size=(1, 1))  # 输出单通道分类结果
+            nn.Conv2d(64, 32, kernel_size=(3, 3), padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 21, kernel_size=(1, 1))  # 输出单通道分类结果
         )
 
     def _make_residual_block(self, in_channels, out_channels):
@@ -237,7 +253,7 @@ class InvariantGenerator(pl.LightningModule):
         self.modality_label_hsi = torch.ones(args.bs, dtype=torch.long).to(CUDA0)
         self.modality_label_lidar = (torch.ones(args.bs, dtype=torch.long) * 2).to(CUDA0)
         # definition of modal one-hot label
-        self.encoder = MyEncoder()
+        self.encoder = PreTrainedEncoder()
 
     def forward(self, data_dict):
         real_rgb, real_hsi, real_lidar = data_dict['rgb'].float(), data_dict['hsi'].float(), data_dict['lidar'].float()
@@ -290,11 +306,11 @@ class InvariantGenerator(pl.LightningModule):
 
         # 计算判别器损失
         real_output_rgb, fake_output_rgb = self.discriminator(encoded_rgb.detach()), \
-                                           self.discriminator(fake_rgb.detach())
+            self.discriminator(fake_rgb.detach())
         real_output_hsi, fake_output_hsi = self.discriminator(encoded_hsi.detach()), \
-                                           self.discriminator(fake_hsi.detach())
+            self.discriminator(fake_hsi.detach())
         real_output_lidar, fake_output_lidar = self.discriminator(encoded_lidar.detach()), \
-                                               self.discriminator(fake_lidar.detach())
+            self.discriminator(fake_lidar.detach())
         disc_loss = self._discriminator_loss(real_output_rgb, fake_output_rgb,
                                              real_output_hsi, fake_output_hsi,
                                              real_output_lidar, fake_output_lidar)
@@ -399,11 +415,11 @@ class Module2(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.encoder = MyEncoder()
-        self.decoder_rgb = MyDecoder(1000)
-        self.decoder_hsi = MyDecoder(1000)
-        self.decoder_lidar = MyDecoder(1000)
-        self.classifier = Classifier(32)
+        self.encoder = PreTrainedEncoder()
+        self.decoder_rgb = MyDecoder(1024)
+        self.decoder_hsi = MyDecoder(1024)
+        self.decoder_lidar = MyDecoder(1024)
+        self.classifier = Classifier(256, 2)
         self.ce = None # cross entropy loss
 
     def forward(self, data_dict):
@@ -412,10 +428,8 @@ class Module2(pl.LightningModule):
         decoded_rgb = self.decoder_rgb(encoded_rgb)
         decoded_hsi = self.decoder_hsi(encoded_hsi)
         decoded_lidar = self.decoder_lidar(encoded_lidar)
-        pred_rgb, pred_hsi, pred_lidar = (self.classifier(decoded_rgb),
-                                          self.classifier(decoded_hsi),
-                                          self.classifier(decoded_lidar))
-        return pred_rgb, pred_hsi, pred_lidar
+        pred = self.classifier(decoded_rgb, decoded_hsi, decoded_lidar)
+        return pred
 
     def _cls_loss(self, cls_pred, gt, class_weight=None, label_smoothing=0.1):
         if class_weight:

@@ -3,12 +3,12 @@ import argparse
 
 def get_argument_parse():
     parse = argparse.ArgumentParser(description='parameters')
-    parse.add_argument('--trial_run', type=int, default=0, help='Experiment number of the trial run.')
+    parse.add_argument('--trial_run', type=int, default=2, help='Experiment number of the trial run.')
     parse.add_argument('--dataset', type=str, default='SZU_R1', help='DFC Houston 2018 | SZUTreeData')
     parse.add_argument('--lr1', type=float, default=0.0005, help='learning rate for noise predictor')
     parse.add_argument('--lr2', type=float, default=0.0005, help='learning rate for classifier')
     parse.add_argument('--lr3', type=float, default=0.0001, help='learning rate for GAN block')
-    parse.add_argument('--bs', type=int, default=16, help='batch_size')
+    parse.add_argument('--bs', type=int, default=2, help='batch_size')
     parse.add_argument('--seed', type=int, default=13, help='default seed = 13')
     parse.add_argument('--T', type=int, default=1000, help='time steps for diffusion procedure')
     parse.add_argument('--if_small_dataset', type=int, default=1)
