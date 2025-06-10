@@ -1,5 +1,6 @@
 .git
 .idea
+.ipynb_checkpoints
 demo.sh
 log.md
 **/.pth
@@ -9,6 +10,5 @@ logs/
 __pycache__/
 Model_old.py
 test.py
-.gitignore
 id_rsa
 id_rsa.pub
