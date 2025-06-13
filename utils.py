@@ -1,11 +1,13 @@
 import torch
 import random
 import os
+import importlib
 import numpy as np
 import cv2
 import torch.nn as nn
 from inspect import isfunction
 import math
+import warnings
 from einops.layers.torch import Rearrange
 from scipy.linalg import sqrtm
 import torch.nn.functional as F
@@ -13,8 +15,13 @@ import torch.utils.data as data
 from torch.utils.data import DataLoader, random_split
 from torch import Tensor
 from typing import Optional, Tuple
+from torch.nn import grad  # noqa: F401
+from torch._torch_docs import sparse_support_notes
+
+
 HSI_SHAPE = (50, 4172, 1202)   # (band, width, height)
 new_shape = (50, 8344, 2404)
+linear = torch.nn.Linear
 
 
 def try_gpu(i=0):
@@ -340,26 +347,6 @@ def CalculateParameters(model_dict):
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f'模型总参数数量: {num_params}')
 
-
-def _is_make_fx_tracing():
-    if not torch.jit.is_scripting():
-        torch_dispatch_mode_stack = torch.utils._python_dispatch._get_current_dispatch_mode_stack()
-        return any(type(x) == torch.fx.experimental.proxy_tensor.ProxyTorchDispatchMode for x in torch_dispatch_mode_stack)
-    else:
-        return False
-
-def _check_arg_device(x: Optional[torch.Tensor]) -> bool:
-    if x is not None:
-        return x.device.type in ["cpu", "cuda", torch.utils.backend_registration._privateuse1_backend_name]
-    return True
-
-
-def _arg_requires_grad(x: Optional[torch.Tensor]) -> bool:
-    if x is not None:
-        return x.requires_grad
-    return False
-
-
 class MultiheadAttention(nn.Module):
     __constants__ = ['batch_first']
     bias_k: Optional[torch.Tensor]
@@ -521,12 +508,12 @@ class MultiheadAttention(nn.Module):
             # generator expressions.
             if torch.overrides.has_torch_function(tensor_args):
                 why_not_fast_path = "some Tensor argument has_torch_function"
-            elif _is_make_fx_tracing():
+            elif nn._is_make_fx_tracing():
                 why_not_fast_path = "we are running make_fx tracing"
-            elif not all(_check_arg_device(x) for x in tensor_args):
+            elif not all(torch.nn.activation._check_arg_device(x) for x in tensor_args):
                 why_not_fast_path = ("some Tensor argument's device is neither one of "
                                      f"cpu, cuda or {torch.utils.backend_registration._privateuse1_backend_name}")
-            elif torch.is_grad_enabled() and any(_arg_requires_grad(x) for x in tensor_args):
+            elif torch.is_grad_enabled() and any(torch.nn.activation._arg_requires_grad(x) for x in tensor_args):
                 why_not_fast_path = ("grad is enabled and at least one of query or the "
                                      "input/output projection weights or biases requires_grad")
             if not why_not_fast_path:
@@ -564,31 +551,33 @@ class MultiheadAttention(nn.Module):
                 query, key, value = (x.transpose(1, 0) for x in (query, key, value))
 
         if not self._qkv_same_embed_dim:
-            attn_output, attn_output_weights = F.multi_head_attention_forward(
-                query, key, value, self.embed_dim, self.num_heads,
-                self.in_proj_weight, self.in_proj_bias,
-                self.bias_k, self.bias_v, self.add_zero_attn,
-                self.dropout, self.out_proj.weight, self.out_proj.bias,
-                training=self.training,
-                key_padding_mask=key_padding_mask, need_weights=need_weights,
-                attn_mask=attn_mask,
-                use_separate_proj_weight=True,
-                q_proj_weight=self.q_proj_weight, k_proj_weight=self.k_proj_weight,
-                v_proj_weight=self.v_proj_weight,
-                average_attn_weights=average_attn_weights,
-                is_causal=is_causal)
+            with torch.cuda.amp.autocast():
+                attn_output, attn_output_weights = F.multi_head_attention_forward(
+                    query, key, value, self.embed_dim, self.num_heads,
+                    self.in_proj_weight, self.in_proj_bias,
+                    self.bias_k, self.bias_v, self.add_zero_attn,
+                    self.dropout, self.out_proj.weight, self.out_proj.bias,
+                    training=self.training,
+                    key_padding_mask=key_padding_mask, need_weights=False,
+                    attn_mask=attn_mask,
+                    use_separate_proj_weight=True,
+                    q_proj_weight=self.q_proj_weight, k_proj_weight=self.k_proj_weight,
+                    v_proj_weight=self.v_proj_weight,
+                    average_attn_weights=average_attn_weights,
+                    is_causal=is_causal)
         else:
-            attn_output, attn_output_weights = F.multi_head_attention_forward(
-                query, key, value, self.embed_dim, self.num_heads,
-                self.in_proj_weight, self.in_proj_bias,
-                self.bias_k, self.bias_v, self.add_zero_attn,
-                self.dropout, self.out_proj.weight, self.out_proj.bias,
-                training=self.training,
-                key_padding_mask=key_padding_mask,
-                need_weights=need_weights,
-                attn_mask=attn_mask,
-                average_attn_weights=average_attn_weights,
-                is_causal=is_causal)
+            with torch.cuda.amp.autocast():
+                attn_output, attn_output_weights = F.multi_head_attention_forward(
+                    query, key, value, self.embed_dim, self.num_heads,
+                    self.in_proj_weight, self.in_proj_bias,
+                    self.bias_k, self.bias_v, self.add_zero_attn,
+                    self.dropout, self.out_proj.weight, self.out_proj.bias,
+                    training=self.training,
+                    key_padding_mask=key_padding_mask,
+                    need_weights=False,
+                    attn_mask=attn_mask,
+                    average_attn_weights=average_attn_weights,
+                    is_causal=is_causal)
         if self.batch_first and is_batched:
             return attn_output.transpose(1, 0), attn_output_weights
         else:

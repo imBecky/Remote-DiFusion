@@ -168,7 +168,7 @@ class Classifier(nn.Module):
     def __init__(self, pos_shape, latent_dim, num_heads=1):
         super(Classifier, self).__init__()
         self.pos_shape = pos_shape
-        self.attention = utils.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads)
+        self.attention = nn.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads, bias=False)
         self.pos_encoding = nn.Parameter(torch.randn(1, latent_dim, pos_shape, pos_shape))
 
         # 修改后的上采样部分
@@ -196,7 +196,6 @@ class Classifier(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 21, kernel_size=(1, 1))  # 输出单通道分类结果
         )
-
     def _make_residual_block(self, in_channels, out_channels):
         return nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding=1),
