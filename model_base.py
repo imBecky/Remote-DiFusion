@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import torchvision.models as models
 
+import utils
+
 CUDA0 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -166,7 +168,7 @@ class Classifier(nn.Module):
     def __init__(self, pos_shape, latent_dim, num_heads=1):
         super(Classifier, self).__init__()
         self.pos_shape = pos_shape
-        self.attention = nn.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads)
+        self.attention = utils.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads)
         self.pos_encoding = nn.Parameter(torch.randn(1, latent_dim, pos_shape, pos_shape))
 
         # 修改后的上采样部分
